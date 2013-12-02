@@ -1,7 +1,3 @@
-/* 
- * udpclient.c - A simple UDP client
- * usage: udpclient <host> <port>
- */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,7 +5,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <netdb.h> 
+#include <netdb.h>
+#include "packet.c"
 
 int BUF_SIZE = 1024;
 
@@ -22,11 +19,11 @@ void error(char *msg) {
 }
 
 int main(int argc, char **argv) {
-    int requestfd, portno, n;
+    int socketfd, resourcefd, portno, n, bytes_received, expected_seq_no;
     int serverlen;
     struct sockaddr_in serveraddr;
     struct hostent *server;
-    char *hostname;
+    char *hostname, *filename;
     char buf[BUF_SIZE];
 
     /* check command line arguments */
@@ -36,10 +33,11 @@ int main(int argc, char **argv) {
     }
     hostname = argv[1];
     portno = atoi(argv[2]);
+    filename = argv[3];
 
     /* socket: create the socket */
-    requestfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (requestfd < 0) 
+    socketfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (socketfd < 0) 
         error("ERROR opening socket");
 
     /* gethostbyname: get the server's DNS entry */
@@ -55,21 +53,38 @@ int main(int argc, char **argv) {
     bcopy((char *)server->h_addr, (char *)&serveraddr.sin_addr.s_addr, server->h_length);
     serveraddr.sin_port = htons(portno);
 
-    /* get a message from the user */
-    bzero(buf, BUF_SIZE);
-    printf("Please enter msg: ");
-    fgets(buf, BUF_SIZE, stdin);
+    /* build the request */
+    struct packet req_pkt;
+    bzero((char *) &req_pkt, sizeof(req_pkt));
+    memcpy(req_pkt.data, filename, strlen(filename));
+    req_pkt.length = sizeof(req_pkt.type) * 3 + strlen(filename);
 
-    /* send the message to the server */
+    /* send the request to the server */
     serverlen = sizeof(serveraddr);
-    n = sendto(requestfd, buf, strlen(buf), 0, &serveraddr, serverlen);
-    if (n < 0) 
+    n = sendto(socketfd, &req_pkt, req_pkt.length, 0, &serveraddr, serverlen);
+    if (n < 0)
       error("ERROR in sendto");
     
-    /* print the server's reply */
-    n = recvfrom(requestfd, buf, strlen(buf), 0, &serveraddr, &serverlen);
-    if (n < 0) 
-      error("ERROR in recvfrom");
-    printf("Echo from server: %s", buf);
+    struct packet rspd_pkt;
+    rspd_pkt.length = 1;
+    bytes_received = 0;
+    resourcefd = open(filename, O_WRITE);
+
+    bzero((char *) &req_pkt, sizeof(req_pkt));
+    req_pkt.length = sizeof(int) * 3;
+
+    while (bytes_received < rspd_pkt.length) {
+        if (recvfrom(socketfd, &rspd_pkt, sizeof(rspd_pkt), 0, &serveraddr, &serverlen) > 0) {
+            if (rspd_pkt.seq_no == expected_seq_no) {
+                write(resourcefd, rspd_pkt.data, strlen(rspd_pkt.data));
+                expected_seq_no++;
+            }
+            req_pkt.type = 1;
+            req_pkt.seq_no = expected_seq_no;
+            n = sendto(socketfd, &req_pkt, req_pkt.length, 0, &serveraddr, serverlen);
+            if (n < 0)
+                error("ERROR in sendto");
+        }
+    }
     return 0;
 }
