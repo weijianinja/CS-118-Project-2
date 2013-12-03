@@ -29,7 +29,7 @@ int main(int argc, char *argv[]) {
     FILE *resource;
 
     if (argc != 2) {
-        fprintf(stderr, "Usage: %s <port>", argv[0]);
+        fprintf(stderr, "Usage: %s <port>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
     portno = atoi(argv[1]);
@@ -65,7 +65,7 @@ int main(int argc, char *argv[]) {
         next_seq_num = 1;
 
         int i, total_packets;
-        resource = fopen(req_pkt.data, O_RDONLY);
+        resource = fopen(req_pkt.data, "r");
         if (resource == NULL)
             response_msg = "ERROR opening file";
 
@@ -74,28 +74,38 @@ int main(int argc, char *argv[]) {
         stat(req_pkt.data, &st);
         bzero((char *) &rspd_pkt, sizeof(rspd_pkt));
         rspd_pkt.type = 2;
-        rspd_pkt.length = st.st_size;
         total_packets = st.st_size / DATA_SIZE;
+        printf("TOTAL %d\n", total_packets);
 
-        for (i = 0; i < WIN_SIZE; i++) {
+        for (i = 1; i <= WIN_SIZE; i++) {
             rspd_pkt.seq_no = i;
-            fread(rspd_pkt.data, 1, DATA_SIZE, resource);
+            n = fread(rspd_pkt.data, 1, DATA_SIZE, resource);
+            printf("LENGTH %d\n", n);
+            rspd_pkt.length = n;
             if(sendto(socketfd, &rspd_pkt, rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
                 error("ERROR on sending");
+            printf("Sent packet number %d\n", rspd_pkt.seq_no);
             next_seq_num++;
         }
 
         while(base <= total_packets) {
             if (recvfrom(socketfd, &req_pkt, sizeof(req_pkt), 0, (struct sockaddr*) &cli_addr, (socklen_t*) &clilen) > 0) {
+                printf("Received ACK for packet %d\n", req_pkt.seq_no);
                 base = req_pkt.seq_no + 1;
                 rspd_pkt.seq_no = next_seq_num;
-                fread(rspd_pkt.data, 1, DATA_SIZE, resource);
+                n = fread(rspd_pkt.data, 1, DATA_SIZE, resource);
+                rspd_pkt.length = n;
                 if(sendto(socketfd, &rspd_pkt, rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
                     error("ERROR on sending");
+                printf("Sent packet number %d\n", next_seq_num);
                 next_seq_num++;
             }
         }
-
-        exit(EXIT_SUCCESS);
+        bzero((char *) &rspd_pkt, sizeof(rspd_pkt));
+        rspd_pkt.type = 3;
+        puts("Teardown");
+        if(sendto(socketfd, &rspd_pkt, sizeof(rspd_pkt.type) * 3, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
+            error("ERROR on sending");
+        fclose(resource);
     }
 }

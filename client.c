@@ -10,8 +10,8 @@
 #include "packet.c"
 
 int BUF_SIZE = 1024;
-double LOSS_PROB = 0.4;
-double CORRUPT_PROB = 0.3;
+double LOSS_PROB = 0;
+double CORRUPT_PROB = 0;
 
 /* 
  * error - wrapper for perror
@@ -26,12 +26,13 @@ double random_num() {
 }
 
 int main(int argc, char **argv) {
-    int socketfd, resourcefd, portno, n, bytes_received, expected_seq_no;
+    int socketfd, portno, n, expected_seq_no;
     int serverlen;
     struct sockaddr_in serveraddr;
     struct hostent *server;
     char *hostname, *filename;
     char buf[BUF_SIZE];
+    FILE* resource;
 
     /* check command line arguments */
     if (argc != 4) {
@@ -71,30 +72,35 @@ int main(int argc, char **argv) {
     n = sendto(socketfd, &req_pkt, req_pkt.length, 0, (struct sockaddr*) &serveraddr, serverlen);
     if (n < 0)
       error("ERROR in sendto");
-    
+    printf("Requested file %s\n", req_pkt.data);
+
     struct packet rspd_pkt;
     int packet_loss, packet_corruption;
-    rspd_pkt.length = 1;
-    bytes_received = 0;
-    resourcefd = open(filename, O_WRONLY);
+    rspd_pkt.length = DATA_SIZE;
+    expected_seq_no = 1;
+    resource = fopen(strcat(filename, "_copy"), "w");
 
     bzero((char *) &req_pkt, sizeof(req_pkt));
-    rspd_pkt.length = sizeof(int) * 3;
+    req_pkt.length = sizeof(int) * 3;
 
-    while (bytes_received < rspd_pkt.length) {
-        packet_loss = LOSS_PROB < random_num();
-        packet_corruption = CORRUPT_PROB < random_num();
-        if (recvfrom(socketfd, &rspd_pkt, sizeof(rspd_pkt), 0, (struct sockaddr*) &serveraddr, (socklen_t*) &serverlen) > 0 && !packet_loss) {
-            if (rspd_pkt.seq_no == expected_seq_no && !packet_corruption) {
-                write(resourcefd, rspd_pkt.data, strlen(rspd_pkt.data));
-                expected_seq_no++;
-            }
+    while (1) {
+        packet_loss = random_num() < LOSS_PROB;
+        packet_corruption = random_num() < CORRUPT_PROB;
+        if (recvfrom(socketfd, &rspd_pkt, sizeof(rspd_pkt), 0, (struct sockaddr*) &serveraddr, (socklen_t*) &serverlen) > 0) {
+            printf("Received packet number %d\n", rspd_pkt.seq_no);
+            if (rspd_pkt.type == 3)
+                break;
+
+            fwrite(rspd_pkt.data, 1, rspd_pkt.length, resource);
+
             req_pkt.type = 1;
-            req_pkt.seq_no = expected_seq_no;
+            req_pkt.seq_no = rspd_pkt.seq_no;
             n = sendto(socketfd, &req_pkt, req_pkt.length, 0, (struct sockaddr*) &serveraddr, serverlen);
             if (n < 0)
                 error("ERROR in sendto");
+            printf("ACK'd packet %d\n", req_pkt.seq_no);
         }
     }
+    fclose(resource);
     return 0;
 }

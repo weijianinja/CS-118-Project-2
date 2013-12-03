@@ -4,8 +4,9 @@
  *		0 - request
  *		1 - ACK
  *		2 - data
+ *		3 - teardown
  *	If type == data, then seq_no denotes the current packet's sequence number
- *	Length is the total length of the file if type == data
+ *	Length is the length of the data field
  *	Data carries the request or actual data; empty if type == ACK
  */
 
