@@ -31,17 +31,15 @@ void clear_window() {
 }
 
 int ack_packet(int seq_no) {
-    int i, j;
-    for(i = 0; i < WIN_SIZE; i++) {
-        if (seq_no < WINDOW[i].seq_no)
-            return 1; // duplicate ACK
-
-        if (WINDOW[i].seq_no == seq_no) {
-            for (j = i; j < WIN_SIZE - 1; j++) {
-                WINDOW[j] = WINDOW[j + 1];
-            }
-            return 0;
+    if (WINDOW[0].seq_no == seq_no) {
+        int j;
+        for (j = 0; j < WIN_SIZE - 1; j++) {
+            WINDOW[j] = WINDOW[j + 1];
         }
+        return 0;
+    }
+    else {
+        return 1;
     }
     error("Packet isn't in the window");
     return 2;
@@ -120,6 +118,8 @@ int main(int argc, char *argv[]) {
 
         stat(req_pkt.data, &st);
         total_packets = st.st_size / DATA_SIZE;
+        if (st.st_size % DATA_SIZE)
+            total_packets++;
         printf("Total packets: %d\n", total_packets);
 
         bzero((char *) &rspd_pkt, sizeof(rspd_pkt));
@@ -137,6 +137,7 @@ int main(int argc, char *argv[]) {
 
         while(base <= total_packets) {
             if (mode == 1 && time(NULL) > timer + TIMEOUT) {
+                printf("Timeout on packet %d!\n", WINDOW[0].seq_no);
                 for (i = 0; i < WIN_SIZE; i++) {
                     if (WINDOW[i].seq_no >= next_seq_num || WINDOW[i].seq_no == WINDOW[i - 1].seq_no)
                         break;
@@ -147,12 +148,15 @@ int main(int argc, char *argv[]) {
             }
             if (recvfrom(socketfd, &req_pkt, sizeof(req_pkt), 0, (struct sockaddr*) &cli_addr, (socklen_t*) &clilen) > 0) {
                 printf("Received ACK for packet %d\n", req_pkt.seq_no);
-                if (ack_packet(req_pkt.seq_no) == 1) {
+                if (ack_packet(req_pkt.seq_no) == 1 && mode == 0) {
+                    printf("Entering timeout mode\n");
                     mode = 1;
                     time(&timer);
                     continue;
                 }
-                base = req_pkt.seq_no + 1;
+                
+                if (mode == 0)
+                    base = req_pkt.seq_no + 1;
 
                 if (next_seq_num <= min(base + WIN_SIZE, total_packets)) {
                     rspd_pkt.seq_no = next_seq_num;

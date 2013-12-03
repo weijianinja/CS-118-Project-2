@@ -7,11 +7,12 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <fcntl.h>
+#include <time.h>
 #include "packet.c"
 
 int BUF_SIZE = 1024;
 double LOSS_PROB = 0.00;
-double CORRUPT_PROB = 0.0;
+double CORRUPT_PROB = 0.1;
 
 /* 
  * error - wrapper for perror
@@ -75,7 +76,6 @@ int main(int argc, char **argv) {
     printf("Requested file %s\n", req_pkt.data);
 
     struct packet rspd_pkt;
-    int packet_loss, packet_corruption;
     rspd_pkt.length = DATA_SIZE;
     expected_seq_no = 1;
     resource = fopen(strcat(filename, "_copy"), "wb");
@@ -85,13 +85,12 @@ int main(int argc, char **argv) {
     req_pkt.type = 1;
     req_pkt.seq_no = expected_seq_no - 1;
 
+    srand(time(NULL));
     while (1) {
-        packet_loss = random_num() < LOSS_PROB;
-        packet_corruption = random_num() < CORRUPT_PROB;
-        if (recvfrom(socketfd, &rspd_pkt, sizeof(rspd_pkt), 0, (struct sockaddr*) &serveraddr, (socklen_t*) &serverlen) < 0 || packet_loss) {
+        if (recvfrom(socketfd, &rspd_pkt, sizeof(rspd_pkt), 0, (struct sockaddr*) &serveraddr, (socklen_t*) &serverlen) < 0 || random_num() < LOSS_PROB) {
             printf("Packet lost!\n");
         }
-        else if (packet_corruption) {
+        else if (random_num() < CORRUPT_PROB) {
             printf("Packet corrupted!\n");
             if (sendto(socketfd, &req_pkt, req_pkt.length, 0, (struct sockaddr*) &serveraddr, serverlen) < 0)
                 error("ERROR responding to corrupt packet");
