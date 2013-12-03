@@ -64,8 +64,8 @@ int main(int argc, char **argv) {
     /* build the request */
     struct packet req_pkt;
     bzero((char *) &req_pkt, sizeof(req_pkt));
-    memcpy(req_pkt.data, filename, strlen(filename));
-    req_pkt.length = sizeof(req_pkt.type) * 3 + strlen(filename);
+    strcpy(req_pkt.data, filename);
+    req_pkt.length = sizeof(req_pkt.type) * 3 + strlen(filename) + 1;
 
     /* send the request to the server */
     serverlen = sizeof(serveraddr);
@@ -101,6 +101,7 @@ int main(int argc, char **argv) {
             printf("ACK'd packet %d\n", req_pkt.seq_no);
         }
     }
+
     fclose(resource);
     return 0;
 }

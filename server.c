@@ -69,6 +69,7 @@ int main(int argc, char *argv[]) {
         if (resource == NULL)
             response_msg = "ERROR opening file";
 
+        printf("%s\n", req_pkt.data);
         struct packet rspd_pkt;
         struct stat st;
         stat(req_pkt.data, &st);
