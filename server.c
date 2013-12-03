@@ -12,21 +12,70 @@
 #include <fcntl.h>
 #include "packet.c"
 
-int BUF_SIZE = 1024;
-int WIN_SIZE = 5;
-char *response_msg = "Request received";
+#define WIN_SIZE 5
+#define TIMEOUT 5000
+
+struct packet WINDOW[WIN_SIZE];
 
 void error(char *msg) {
     perror(msg);
     exit(EXIT_FAILURE);
 }
 
+int min(int a, int b) {
+    return a < b ? a : b;
+}
+
+void clear_window() {
+    bzero((char *) WINDOW, sizeof(WINDOW));
+}
+
+int ack_packet(int seq_no) {
+    int i, j;
+    for(i = 0; i < WIN_SIZE; i++) {
+        if (seq_no < WINDOW[i].seq_no)
+            return 1; // duplicate ACK
+
+        if (WINDOW[i].seq_no == seq_no) {
+            for (j = i; j < WIN_SIZE - 1; j++) {
+                WINDOW[j] = WINDOW[j + 1];
+            }
+            return 0;
+        }
+    }
+    error("Packet isn't in the window");
+    return 2;
+}
+
+void add_packet(struct packet new) {
+    int i;
+    for (i = 1; i < WIN_SIZE; i++) {
+        if (WINDOW[i].seq_no == WINDOW[i - 1].seq_no) {
+            WINDOW[i] = new;
+            return;
+        }
+    }
+    error("Window is full!");
+}
+
+struct packet get_packet(int seq_no) {
+    int i;
+    for (i = 0; i < WIN_SIZE; i++) {
+        if (WINDOW[i].seq_no == seq_no) {
+            return WINDOW[i];
+        }
+    }
+    error("Packet isn't in the window");
+}
+
 int main(int argc, char *argv[]) {
-    int socketfd = 0;
+    int socketfd = 0, mode = 0;
     struct sockaddr_in serv_addr, cli_addr; 
     int pid, clilen, portno, n, base, next_seq_num;
-    struct packet req_pkt;
+    struct packet req_pkt, rspd_pkt;
+    struct stat st;
     FILE *resource;
+    time_t timer;
 
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <port>\n", argv[0]);
@@ -54,51 +103,62 @@ int main(int argc, char *argv[]) {
 
     clilen = sizeof(cli_addr);
 
-    int bytes_received;
     // run in an infinite loop so that the server is always running
-    while(1) {
-        bytes_received = recvfrom(socketfd, &req_pkt, sizeof(req_pkt), 0, (struct sockaddr*) &cli_addr, (socklen_t*) &clilen);
-        if (bytes_received < 0)
+    while(1) {        
+        if (recvfrom(socketfd, &req_pkt, sizeof(req_pkt), 0, (struct sockaddr*) &cli_addr, (socklen_t*) &clilen) < 0)
             error("ERROR on receiving from client");
         printf("Server received %d bytes from %s: %s\n", req_pkt.length, inet_ntoa(cli_addr.sin_addr), req_pkt.data);
+
         base = 1;
         next_seq_num = 1;
+        clear_window();
 
         int i, total_packets;
         resource = fopen(req_pkt.data, "rb");
         if (resource == NULL)
-            response_msg = "ERROR opening file";
+            error("ERROR opening file");
 
-        printf("%s\n", req_pkt.data);
-        struct packet rspd_pkt;
-        struct stat st;
         stat(req_pkt.data, &st);
+        total_packets = st.st_size / DATA_SIZE;
+        printf("Total packets: %d\n", total_packets);
+
         bzero((char *) &rspd_pkt, sizeof(rspd_pkt));
         rspd_pkt.type = 2;
-        total_packets = st.st_size / DATA_SIZE;
-        printf("TOTAL %d\n", total_packets);
 
-        for (i = 1; i <= WIN_SIZE; i++) {
-            rspd_pkt.seq_no = i;
-            n = fread(rspd_pkt.data, 1, DATA_SIZE, resource);
-            printf("LENGTH %d\n", n);
-            rspd_pkt.length = n;
-            if(sendto(socketfd, &rspd_pkt, sizeof(int) * 3 + rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
+        for (i = 0; i < WIN_SIZE; i++) {
+            rspd_pkt.seq_no = i + 1;
+            rspd_pkt.length = fread(rspd_pkt.data, 1, DATA_SIZE, resource);
+            WINDOW[i] = rspd_pkt;
+            if (sendto(socketfd, &rspd_pkt, sizeof(int) * 3 + rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
                 error("ERROR on sending");
             printf("Sent packet number %d\n", rspd_pkt.seq_no);
             next_seq_num++;
         }
 
         while(base <= total_packets) {
+            if (mode == 1 && time(NULL) > timer + TIMEOUT) {
+                for (i = 0; i < WIN_SIZE; i++) {
+                    if (WINDOW[i].seq_no >= next_seq_num || WINDOW[i].seq_no == WINDOW[i - 1].seq_no)
+                        break;
+                    else if (sendto(socketfd, &WINDOW[i], sizeof(int) * 3 + WINDOW[i].length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
+                        error("ERROR on sending");
+                }
+                mode = 0;
+            }
             if (recvfrom(socketfd, &req_pkt, sizeof(req_pkt), 0, (struct sockaddr*) &cli_addr, (socklen_t*) &clilen) > 0) {
                 printf("Received ACK for packet %d\n", req_pkt.seq_no);
+                if (ack_packet(req_pkt.seq_no) == 1) {
+                    mode = 1;
+                    time(&timer);
+                    continue;
+                }
                 base = req_pkt.seq_no + 1;
 
-                if (next_seq_num < total_packets) {
+                if (next_seq_num <= min(base + WIN_SIZE, total_packets)) {
                     rspd_pkt.seq_no = next_seq_num;
-                    n = fread(rspd_pkt.data, 1, DATA_SIZE, resource);
-                    rspd_pkt.length = n;
-                    if(sendto(socketfd, &rspd_pkt, sizeof(int) * 3 + rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
+                    rspd_pkt.length = fread(rspd_pkt.data, 1, DATA_SIZE, resource);
+                    add_packet(rspd_pkt);
+                    if (sendto(socketfd, &rspd_pkt, sizeof(int) * 3 + rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
                         error("ERROR on sending");
                     printf("Sent packet number %d\n", next_seq_num);
                     next_seq_num++;
@@ -108,8 +168,9 @@ int main(int argc, char *argv[]) {
         bzero((char *) &rspd_pkt, sizeof(rspd_pkt));
         rspd_pkt.type = 3;
         puts("Teardown");
-        if(sendto(socketfd, &rspd_pkt, sizeof(rspd_pkt.type) * 3, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
+        if (sendto(socketfd, &rspd_pkt, sizeof(rspd_pkt.type) * 3, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
             error("ERROR on sending");
         fclose(resource);
     }
+    return 0;
 }

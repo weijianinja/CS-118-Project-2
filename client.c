@@ -10,8 +10,8 @@
 #include "packet.c"
 
 int BUF_SIZE = 1024;
-double LOSS_PROB = 0;
-double CORRUPT_PROB = 0;
+double LOSS_PROB = 0.00;
+double CORRUPT_PROB = 0.0;
 
 /* 
  * error - wrapper for perror
@@ -82,26 +82,35 @@ int main(int argc, char **argv) {
 
     bzero((char *) &req_pkt, sizeof(req_pkt));
     req_pkt.length = sizeof(int) * 3;
+    req_pkt.type = 1;
+    req_pkt.seq_no = expected_seq_no - 1;
 
     while (1) {
         packet_loss = random_num() < LOSS_PROB;
         packet_corruption = random_num() < CORRUPT_PROB;
-        if (recvfrom(socketfd, &rspd_pkt, sizeof(rspd_pkt), 0, (struct sockaddr*) &serveraddr, (socklen_t*) &serverlen) > 0) {
+        if (recvfrom(socketfd, &rspd_pkt, sizeof(rspd_pkt), 0, (struct sockaddr*) &serveraddr, (socklen_t*) &serverlen) < 0 || packet_loss) {
+            printf("Packet lost!\n");
+        }
+        else if (packet_corruption) {
+            printf("Packet corrupted!\n");
+            if (sendto(socketfd, &req_pkt, req_pkt.length, 0, (struct sockaddr*) &serveraddr, serverlen) < 0)
+                error("ERROR responding to corrupt packet");
+        }
+        else {
             printf("Received packet number %d\n", rspd_pkt.seq_no);
             if (rspd_pkt.type == 3)
                 break;
 
             fwrite(rspd_pkt.data, 1, rspd_pkt.length, resource);
-
-            req_pkt.type = 1;
             req_pkt.seq_no = rspd_pkt.seq_no;
-            n = sendto(socketfd, &req_pkt, req_pkt.length, 0, (struct sockaddr*) &serveraddr, serverlen);
-            if (n < 0)
-                error("ERROR in sendto");
+
+            if (sendto(socketfd, &req_pkt, req_pkt.length, 0, (struct sockaddr*) &serveraddr, serverlen) < 0)
+                error("ERROR acking");
+
             printf("ACK'd packet %d\n", req_pkt.seq_no);
+            expected_seq_no++;
         }
     }
-
     fclose(resource);
     return 0;
 }
