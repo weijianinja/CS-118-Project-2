@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
     int packet_loss, packet_corruption;
     rspd_pkt.length = DATA_SIZE;
     expected_seq_no = 1;
-    resource = fopen(strcat(filename, "_copy"), "w");
+    resource = fopen(strcat(filename, "_copy"), "wb");
 
     bzero((char *) &req_pkt, sizeof(req_pkt));
     req_pkt.length = sizeof(int) * 3;

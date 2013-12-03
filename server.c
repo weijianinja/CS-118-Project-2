@@ -65,7 +65,7 @@ int main(int argc, char *argv[]) {
         next_seq_num = 1;
 
         int i, total_packets;
-        resource = fopen(req_pkt.data, "r");
+        resource = fopen(req_pkt.data, "rb");
         if (resource == NULL)
             response_msg = "ERROR opening file";
 
@@ -82,7 +82,7 @@ int main(int argc, char *argv[]) {
             n = fread(rspd_pkt.data, 1, DATA_SIZE, resource);
             printf("LENGTH %d\n", n);
             rspd_pkt.length = n;
-            if(sendto(socketfd, &rspd_pkt, rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
+            if(sendto(socketfd, &rspd_pkt, sizeof(int) * 3 + rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
                 error("ERROR on sending");
             printf("Sent packet number %d\n", rspd_pkt.seq_no);
             next_seq_num++;
@@ -92,13 +92,16 @@ int main(int argc, char *argv[]) {
             if (recvfrom(socketfd, &req_pkt, sizeof(req_pkt), 0, (struct sockaddr*) &cli_addr, (socklen_t*) &clilen) > 0) {
                 printf("Received ACK for packet %d\n", req_pkt.seq_no);
                 base = req_pkt.seq_no + 1;
-                rspd_pkt.seq_no = next_seq_num;
-                n = fread(rspd_pkt.data, 1, DATA_SIZE, resource);
-                rspd_pkt.length = n;
-                if(sendto(socketfd, &rspd_pkt, rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
-                    error("ERROR on sending");
-                printf("Sent packet number %d\n", next_seq_num);
-                next_seq_num++;
+
+                if (next_seq_num < total_packets) {
+                    rspd_pkt.seq_no = next_seq_num;
+                    n = fread(rspd_pkt.data, 1, DATA_SIZE, resource);
+                    rspd_pkt.length = n;
+                    if(sendto(socketfd, &rspd_pkt, sizeof(int) * 3 + rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
+                        error("ERROR on sending");
+                    printf("Sent packet number %d\n", next_seq_num);
+                    next_seq_num++;
+                }
             }
         }
         bzero((char *) &rspd_pkt, sizeof(rspd_pkt));
