@@ -6,9 +6,12 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <fcntl.h>
 #include "packet.c"
 
 int BUF_SIZE = 1024;
+double LOSS_PROB = 0.4;
+double CORRUPT_PROB = 0.3;
 
 /* 
  * error - wrapper for perror
@@ -16,6 +19,10 @@ int BUF_SIZE = 1024;
 void error(char *msg) {
     perror(msg);
     exit(EXIT_FAILURE);
+}
+
+double random_num() {
+    return (double) rand()/(double) RAND_MAX;
 }
 
 int main(int argc, char **argv) {
@@ -61,27 +68,30 @@ int main(int argc, char **argv) {
 
     /* send the request to the server */
     serverlen = sizeof(serveraddr);
-    n = sendto(socketfd, &req_pkt, req_pkt.length, 0, &serveraddr, serverlen);
+    n = sendto(socketfd, &req_pkt, req_pkt.length, 0, (struct sockaddr*) &serveraddr, serverlen);
     if (n < 0)
       error("ERROR in sendto");
     
     struct packet rspd_pkt;
+    int packet_loss, packet_corruption;
     rspd_pkt.length = 1;
     bytes_received = 0;
-    resourcefd = open(filename, O_WRITE);
+    resourcefd = open(filename, O_WRONLY);
 
     bzero((char *) &req_pkt, sizeof(req_pkt));
-    req_pkt.length = sizeof(int) * 3;
+    rspd_pkt.length = sizeof(int) * 3;
 
     while (bytes_received < rspd_pkt.length) {
-        if (recvfrom(socketfd, &rspd_pkt, sizeof(rspd_pkt), 0, &serveraddr, &serverlen) > 0) {
-            if (rspd_pkt.seq_no == expected_seq_no) {
+        packet_loss = LOSS_PROB < random_num();
+        packet_corruption = CORRUPT_PROB < random_num();
+        if (recvfrom(socketfd, &rspd_pkt, sizeof(rspd_pkt), 0, (struct sockaddr*) &serveraddr, (socklen_t*) &serverlen) > 0 && !packet_loss) {
+            if (rspd_pkt.seq_no == expected_seq_no && !packet_corruption) {
                 write(resourcefd, rspd_pkt.data, strlen(rspd_pkt.data));
                 expected_seq_no++;
             }
             req_pkt.type = 1;
             req_pkt.seq_no = expected_seq_no;
-            n = sendto(socketfd, &req_pkt, req_pkt.length, 0, &serveraddr, serverlen);
+            n = sendto(socketfd, &req_pkt, req_pkt.length, 0, (struct sockaddr*) &serveraddr, serverlen);
             if (n < 0)
                 error("ERROR in sendto");
         }

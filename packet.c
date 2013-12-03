@@ -9,7 +9,7 @@
  *	Data carries the request or actual data; empty if type == ACK
  */
 
-int DATA_SIZE = 128;
+const int DATA_SIZE = 128;
 struct packet
 {
   int type;

@@ -1,4 +1,5 @@
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdio.h>
@@ -21,10 +22,11 @@ void error(char *msg) {
 }
 
 int main(int argc, char *argv[]) {
-    int socketfd = 0, resourcefd = 0;
+    int socketfd = 0;
     struct sockaddr_in serv_addr, cli_addr; 
     int pid, clilen, portno, n, base, next_seq_num;
     struct packet req_pkt;
+    FILE *resource;
 
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <port>", argv[0]);
@@ -52,9 +54,10 @@ int main(int argc, char *argv[]) {
 
     clilen = sizeof(cli_addr);
 
+    int bytes_received;
     // run in an infinite loop so that the server is always running
     while(1) {
-        bytes_received = recvfrom(socketfd, &req_pkt, sizeof(req_pkt), 0, (struct sockaddr*) &cli_addr, &clilen);
+        bytes_received = recvfrom(socketfd, &req_pkt, sizeof(req_pkt), 0, (struct sockaddr*) &cli_addr, (socklen_t*) &clilen);
         if (bytes_received < 0)
             error("ERROR on receiving from client");
         printf("Server received %d bytes from %s: %s\n", req_pkt.length, inet_ntoa(cli_addr.sin_addr), req_pkt.data);
@@ -62,29 +65,31 @@ int main(int argc, char *argv[]) {
         next_seq_num = 1;
 
         int i, total_packets;
-        resourcefd = fopen(req_pkt.data, O_RDONLY);
-        if (resourcefd < 0)
+        resource = fopen(req_pkt.data, O_RDONLY);
+        if (resource == NULL)
             response_msg = "ERROR opening file";
 
         struct packet rspd_pkt;
+        struct stat st;
+        stat(req_pkt.data, &st);
         bzero((char *) &rspd_pkt, sizeof(rspd_pkt));
         rspd_pkt.type = 2;
-        rspd_pkt.length = resourcefd.file_size;
-        total_packets = resourcefd.file_size / PACKET_SIZE;
+        rspd_pkt.length = st.st_size;
+        total_packets = st.st_size / DATA_SIZE;
 
         for (i = 0; i < WIN_SIZE; i++) {
             rspd_pkt.seq_no = i;
-            memcpy(rspd_pkt.data, read(resourcefd), bytes_read);
+            fread(rspd_pkt.data, 1, DATA_SIZE, resource);
             if(sendto(socketfd, &rspd_pkt, rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
                 error("ERROR on sending");
             next_seq_num++;
         }
 
         while(base <= total_packets) {
-            if (recvfrom(socketfd, &req_pkt, sizeof(req_pkt), 0, (struct sockaddr*) &cli_addr, &clilen) > 0) {
+            if (recvfrom(socketfd, &req_pkt, sizeof(req_pkt), 0, (struct sockaddr*) &cli_addr, (socklen_t*) &clilen) > 0) {
                 base = req_pkt.seq_no + 1;
                 rspd_pkt.seq_no = next_seq_num;
-                memcpy(rspd_pkt.data, read(resourcefd), bytes_read);
+                fread(rspd_pkt.data, 1, DATA_SIZE, resource);
                 if(sendto(socketfd, &rspd_pkt, rspd_pkt.length, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
                     error("ERROR on sending");
                 next_seq_num++;
